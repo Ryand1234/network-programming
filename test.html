@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>HTTP GET Request</title>
+</head>
+<body>
+    <button onclick="fetchData()">Send GET Request to Go Server</button>
+    <div id="response"></div>
+
+    <script>
+        function fetchData() {
+            fetch('http://127.0.0.1:8080') // Replace with your server's URL
+                .then(response => response.json())
+                .then(data => {
+                    // Handle the data received from the server
+                    document.getElementById('response').innerText = JSON.stringify(data, null, 2);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+        }
+    </script>
+</body>
+</html>
