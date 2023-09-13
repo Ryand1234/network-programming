@@ -5,11 +5,12 @@ import (
 	"io/ioutil"
 	"log"
 	"path/filepath"
+	"strconv"
 	"unicode"
 )
 
 func main() {
-	folderPath := "./tests/step2"
+	folderPath := "./tests/step3"
 
 	// Open the folder
 	dirEntries, err := ioutil.ReadDir(folderPath)
@@ -56,6 +57,8 @@ const (
 	TokenColon
 	TokenComma
 	TokenUnknown
+	TokenBoolean
+	TokenNull
 )
 
 type Token struct {
@@ -161,6 +164,13 @@ func (p *Parser) parseValue() (JSONValue, error) {
 	switch p.cur.Type {
 	case TokenIdentifier:
 		return string(p.cur.Value), nil
+	case TokenBoolean:
+		return string(p.cur.Value), nil
+	case TokenNull:
+		return string(p.cur.Value), nil
+	case TokenNumber:
+		val, _ := strconv.Atoi(p.cur.Value)
+		return val, nil
 	case TokenLeftCurlyBracket:
 		return p.parseObject()
 	// case TokenLeftSquareBracket:
@@ -246,6 +256,34 @@ func (l *Lexer) getNextToken() Token {
 		token := Token{Type: TokenComma, Value: string(l.curChar)}
 		l.readChar()
 		return token
+	case l.curChar == 't':
+		token := Token{Type: TokenBoolean, Value: string("true")}
+		for i := 0; i < 4; i++ {
+			l.readChar()
+		}
+		return token
+	case l.curChar == 'f':
+		token := Token{Type: TokenBoolean, Value: string("false")}
+		for i := 0; i < 5; i++ {
+			l.readChar()
+		}
+		return token
+	case l.curChar == 'n':
+		token := Token{Type: TokenNull, Value: string("null")}
+		for i := 0; i < 4; i++ {
+			l.readChar()
+		}
+		return token
+	case unicode.IsDigit(l.curChar):
+		val := 0
+		for unicode.IsDigit(l.curChar) {
+			temp := int(l.curChar - '0')
+			val = val*10 + temp
+			l.readChar()
+		}
+		token := Token{Type: TokenNumber, Value: fmt.Sprint(val)}
+		return token
+
 	case l.curChar == ':':
 		token := Token{Type: TokenColon, Value: string(l.curChar)}
 		l.readChar()
