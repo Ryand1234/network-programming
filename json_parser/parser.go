@@ -5,19 +5,23 @@ import (
 	"io/ioutil"
 	"log"
 	"path/filepath"
-	"strconv"
+	"strings"
 	"unicode"
 )
 
+type JSONValue interface{}
+type JSONObject map[JSONValue]JSONValue
+type JSONArray []JSONValue
+
 func main() {
-	folderPath := "./tests/step3"
+	folderPath := "./test"
 
 	// Open the folder
 	dirEntries, err := ioutil.ReadDir(folderPath)
 	if err != nil {
 		log.Fatalf("Error opening folder: %v", err)
 	}
-
+	pass, fail := 0, 0
 	// Iterate over the files in the folder
 	for _, entry := range dirEntries {
 		if entry.IsDir() {
@@ -35,9 +39,24 @@ func main() {
 		}
 
 		// Process the file content as needed
-		fmt.Printf("Contents of %s:\n%s\n", entry.Name(), string(fileContent))
-		checkValidity(string(fileContent))
+		status := checkValidity(string(fileContent))
+		if !status {
+			if strings.Contains(entry.Name(), "fail") {
+				pass++
+			} else {
+				fmt.Printf("Contents of %s:\n%s\n", entry.Name(), string(fileContent))
+				fail++
+			}
+		} else {
+			if strings.Contains(entry.Name(), "pass") {
+				pass++
+			} else {
+				fmt.Printf("Contents of %s:\n%s\n", entry.Name(), string(fileContent))
+				fail++
+			}
+		}
 	}
+	fmt.Println("Success: ", pass, " Fail: ", fail)
 }
 
 type TokenType int
@@ -57,13 +76,14 @@ const (
 	TokenColon
 	TokenComma
 	TokenUnknown
-	TokenBoolean
+	TokenTrue
+	TokenFalse
 	TokenNull
 )
 
 type Token struct {
 	Type  TokenType
-	Value string
+	Value JSONValue
 }
 
 type Lexer struct {
@@ -79,33 +99,6 @@ type Parser struct {
 	error []string
 }
 
-type Stack struct {
-	data []Token
-}
-
-func (s *Stack) Push(t Token) {
-	s.data = append(s.data, t)
-}
-
-func (s *Stack) Pop() Token {
-	if len(s.data) == 0 {
-		return Token{Type: TokenEOF, Value: ""}
-	}
-
-	top := s.data[len(s.data)-1]
-	s.data = s.data[:len(s.data)-1]
-	return top
-}
-
-func (s *Stack) IsEmpty() bool {
-	return len(s.data) == 0
-}
-
-func (s *Stack) TestRow() bool {
-
-	return true
-}
-
 func NewParser(lexer *Lexer) *Parser {
 	parser := &Parser{lexer: lexer, error: []string{}}
 	parser.nextToken()
@@ -117,27 +110,57 @@ func (p *Parser) nextToken() {
 	p.peek = p.lexer.getNextToken()
 }
 
-type JSONValue interface{}
-type JSONObject map[string]JSONValue
+func (p *Parser) parseArray() (JSONArray, error) {
+	list := make(JSONArray, 0)
+	isLastComma := false
+	for {
+		val, err := p.parseValue()
+
+		if err != nil {
+			return nil, err
+		}
+		if p.cur.Type == TokenRightSquareBracket && !isLastComma {
+			return list, nil
+		}
+		if p.cur.Type == TokenRightSquareBracket && isLastComma {
+			return nil, fmt.Errorf("Expected element after comma")
+		}
+		list = append(list, val)
+		p.nextToken()
+
+		if p.cur.Type == TokenRightSquareBracket {
+			return list, nil
+		}
+		if p.cur.Type != TokenComma {
+			return nil, fmt.Errorf("Expected comma after element but got %v", p.cur.Value)
+		} else {
+			isLastComma = true
+		}
+	}
+}
 
 func (p *Parser) parseObject() (JSONObject, error) {
 	obj := make(JSONObject)
+	isLastTokenComma := false
 	for {
 		p.nextToken()
-		if p.cur.Type == TokenRightCurlyBracket {
+		if p.cur.Type == TokenRightCurlyBracket && !isLastTokenComma {
 			return obj, nil
 		}
+		if p.cur.Type == TokenRightCurlyBracket && isLastTokenComma {
+			return nil, fmt.Errorf("Expected key after comma")
+		}
 		// if p.cur.Type != TokenDoubleQuote {
-		// 	return nil, fmt.Errorf("Expected double quotes bug got %v", string(p.cur.Value))
+		// 	return nil, fmt.Errorf("Expected double quotes bug got %v", p.cur.Value)
 		// }
 		// p.nextToken()
 		if p.cur.Type != TokenIdentifier {
-			return nil, fmt.Errorf("Expected identifier bug got %v", string(p.cur.Value))
+			return nil, fmt.Errorf("Expected identifier but got %v", p.cur.Value)
 		}
 		key := p.cur.Value
 		p.nextToken()
 		if p.cur.Type != TokenColon {
-			return nil, fmt.Errorf("Expected colon bug got %v", string(p.cur.Value))
+			return nil, fmt.Errorf("Expected colon bug got %v", p.cur.Value)
 		}
 		// p.nextToken()
 		value, err := p.parseValue()
@@ -145,14 +168,14 @@ func (p *Parser) parseObject() (JSONObject, error) {
 			return nil, err
 		}
 		obj[key] = value
-		// fmt.Println("CUR: ", string(p.cur.Value))
 		p.nextToken()
-		// fmt.Println("CUR: ", string(p.cur.Value))
 		if p.cur.Type == TokenRightCurlyBracket {
 			return obj, nil
 		}
 		if p.cur.Type != TokenComma {
-			return nil, fmt.Errorf("Expected Comma but got %v", string(p.cur.Value))
+			return nil, fmt.Errorf("Expected Comma but got %v", p.cur.Value)
+		} else {
+			isLastTokenComma = true
 		}
 	}
 }
@@ -163,22 +186,25 @@ func (p *Parser) parseValue() (JSONValue, error) {
 	p.nextToken()
 	switch p.cur.Type {
 	case TokenIdentifier:
-		return string(p.cur.Value), nil
-	case TokenBoolean:
-		return string(p.cur.Value), nil
+		return p.cur.Value, nil
+	case TokenTrue:
+		return true, nil
+	case TokenFalse:
+		return false, nil
 	case TokenNull:
-		return string(p.cur.Value), nil
+		return p.cur.Value, nil
 	case TokenNumber:
-		val, _ := strconv.Atoi(p.cur.Value)
-		return val, nil
+		return p.cur.Value, nil
 	case TokenLeftCurlyBracket:
 		return p.parseObject()
-	// case TokenLeftSquareBracket:
-	// 	return parseArray(p)
+	case TokenLeftSquareBracket:
+		return p.parseArray()
+	case TokenRightSquareBracket:
+		return p.cur, nil
 	case TokenEOF:
 		return TokenEOF, nil
 	default:
-		return nil, fmt.Errorf("Unexpected token %v", string(p.cur.Value))
+		return nil, fmt.Errorf("Unexpected token %v", p.cur.Value)
 	}
 }
 
@@ -222,14 +248,14 @@ func (l *Lexer) readString() (TokenType, string) {
 
 func (l *Lexer) getNextToken() Token {
 	l.skipWhiteSpace()
-	// fmt.Println("CUR: ", string(l.curChar), l.pos)
+	// fmt.Println("CUR: ", l.curChar, l.pos)
 	switch {
 	case l.curChar == '{':
-		token := Token{Type: TokenLeftCurlyBracket, Value: string(l.curChar)}
+		token := Token{Type: TokenLeftCurlyBracket, Value: l.curChar}
 		l.readChar()
 		return token
 	case l.curChar == '}':
-		token := Token{Type: TokenRightCurlyBracket, Value: string(l.curChar)}
+		token := Token{Type: TokenRightCurlyBracket, Value: l.curChar}
 		l.readChar()
 		return token
 	case l.curChar == '"':
@@ -237,39 +263,39 @@ func (l *Lexer) getNextToken() Token {
 		token := Token{Type: tokenType, Value: value}
 		return token
 	case l.curChar == '(':
-		token := Token{Type: TokenLeftRoundBracket, Value: string(l.curChar)}
+		token := Token{Type: TokenLeftRoundBracket, Value: l.curChar}
 		l.readChar()
 		return token
 	case l.curChar == ')':
-		token := Token{Type: TokenRightRoundBracket, Value: string(l.curChar)}
+		token := Token{Type: TokenRightRoundBracket, Value: l.curChar}
 		l.readChar()
 		return token
 	case l.curChar == '[':
-		token := Token{Type: TokenLeftSquareBracket, Value: string(l.curChar)}
+		token := Token{Type: TokenLeftSquareBracket, Value: l.curChar}
 		l.readChar()
 		return token
 	case l.curChar == ']':
-		token := Token{Type: TokenRightSquareBracket, Value: string(l.curChar)}
+		token := Token{Type: TokenRightSquareBracket, Value: l.curChar}
 		l.readChar()
 		return token
 	case l.curChar == ',':
-		token := Token{Type: TokenComma, Value: string(l.curChar)}
+		token := Token{Type: TokenComma, Value: l.curChar}
 		l.readChar()
 		return token
 	case l.curChar == 't':
-		token := Token{Type: TokenBoolean, Value: string("true")}
+		token := Token{Type: TokenTrue, Value: true}
 		for i := 0; i < 4; i++ {
 			l.readChar()
 		}
 		return token
 	case l.curChar == 'f':
-		token := Token{Type: TokenBoolean, Value: string("false")}
+		token := Token{Type: TokenFalse, Value: false}
 		for i := 0; i < 5; i++ {
 			l.readChar()
 		}
 		return token
 	case l.curChar == 'n':
-		token := Token{Type: TokenNull, Value: string("null")}
+		token := Token{Type: TokenNull, Value: TokenNull}
 		for i := 0; i < 4; i++ {
 			l.readChar()
 		}
@@ -281,33 +307,24 @@ func (l *Lexer) getNextToken() Token {
 			val = val*10 + temp
 			l.readChar()
 		}
-		token := Token{Type: TokenNumber, Value: fmt.Sprint(val)}
+		token := Token{Type: TokenNumber, Value: val}
 		return token
 
 	case l.curChar == ':':
-		token := Token{Type: TokenColon, Value: string(l.curChar)}
+		token := Token{Type: TokenColon, Value: l.curChar}
 		l.readChar()
 		return token
-	// case unicode.IsLetter(l.curChar) || unicode.IsDigit(l.curChar):
-	// 	var identifier string
-	// 	for unicode.IsLetter(l.curChar) || unicode.IsDigit(l.curChar) {
-	// 		identifier += string(l.curChar)
-	// 		l.readChar()
-	// 	}
-	// 	token := Token{Type: TokenIdentifier, Value: identifier}
-	// 	// l.readChar()
-	// 	return token
 	case l.curChar == 0:
 		return Token{Type: TokenEOF, Value: ""}
 		// default:
 		// 	l.readChar()
 	default:
 		// l.readChar()
-		return Token{Type: TokenUnknown, Value: string(l.curChar)}
+		return Token{Type: TokenUnknown, Value: l.curChar}
 	}
 }
 
-func checkValidity(fileContent string) {
+func checkValidity(fileContent string) bool {
 	lexer := NewLexer(fileContent)
 	// for {
 	// 	token := lexer.getNextToken()
@@ -321,14 +338,14 @@ func checkValidity(fileContent string) {
 	if err != nil {
 		fmt.Println("Invalid JSON")
 		fmt.Println(err)
-		return
+		return false
 	}
 	if parsedValue == TokenEOF {
 		fmt.Println("Invalid JSON")
-		return
+		return false
 	}
-	fmt.Println("Valid JSON")
-	fmt.Println(parsedValue)
+	return true
+	// fmt.Println(parsedValue)
 	// valid := parser.parseJson()
 	// if valid {
 	// 	fmt.Println("Valid JSON file")
